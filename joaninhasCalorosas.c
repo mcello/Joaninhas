@@ -320,12 +320,12 @@ void nextCycle( hex *H[], cdqueue *cdq) {
 
 neighbors *neighborn( hex *H[], position p) {
 	int i, k = 0,
-		parity = p.row % 2;
-	int dneighbors[2][6][2] = {
+		paritying = p.row % 2;
+	neighbors *nbs = (neighbors *) malloc( sizeof (neighbors));
+	int neighbors[2][6][2] = {
 		{ {  0, +1 }, { -1,  0 }, { -1, -1 }, {  0, -1 }, { +1, -1 }, { +1,  0 } },
 		{ {  0, +1 }, { -1, +1 }, { -1,  0 }, {  0, -1 }, { +1,  0 }, { +1, +1 } }
 	};
-	neighbors *nbs = (neighbors *) malloc( sizeof (neighbors));
 	if (nbs == NULL) {
 		fprintf( stderr, "%d - A memoria estourou! Socorro! "
 			     "malloc devolveu NULL! (%d bytes)\n",
@@ -333,9 +333,9 @@ neighbors *neighborn( hex *H[], position p) {
 		exit( EXIT_FAILURE);
 	}
 	for (i = 0; i < 6; ++i) {
-		if (H[p.row + dneighbors[parity][i][0], p.row + dneighbors[parity][i][1]].elem == VAZIA) {
-			nbs[k]->nbs.row = p.row + dneighbors[parity][i][0];
-			nbs[k]->nbs.col = p.row + dneighbors[parity][i][1];
+		if (H[p.row + neighbors[paritying][i][0]][p.col + neighbors[paritying][i][1]].elem == VAZIA) {
+			nbs->nbs[k].row = p.row + neighbors[paritying][i][0];
+			nbs->nbs[k].col = p.row + neighbors[paritying][i][1];
 			nbs->amount = ++k;
 		};
 	}
