@@ -8,6 +8,7 @@
  Author      : Marcello Souza de Oliveira, 6432692
 			 : Francisco Alexandre da Silva Gomes dos Santos, 794650
 			 : Mauricio Santana, 7991170
+			 : Raul Rincon, 9161153
 
  Course      : Bacharelado em Ciencias da Computacao
 
@@ -84,7 +85,7 @@
 
 /*
  * Habilita a impressao do tempo decorrido entre o inicio e fim do trecho de
- * simulacao (sem escrita no arq. saida).
+ * simulacao (sem contar a escrita no arq. saida).
  */
 #define PRINTTIME
 
@@ -131,7 +132,7 @@ typedef enum { EVEN, ODD } parity;
 typedef struct hex {
 	int index;
 	occupation elem;
-	int sem;
+	unsigned int sem;
 } hex;
 typedef hex **hexgrid;
 
@@ -344,7 +345,7 @@ int main( int argc, char *argv[]) {
  **********/
 
 /*
- * Versão da func. malloc com tratamento de erro.
+ * Versão da func. malloc com tratamento de erro. Deve-se fazer cast ao usa-la.
  */
 void *mallocX( unsigned int nbytes) {
 	void *ptr;
@@ -453,6 +454,9 @@ void killBugs( bug *ladybug) {
  ==============================================================================
 */
 
+/*
+ * Aqui, nao compensou paralelisar!
+ */
 void QUEUEinit( disturbs dis[], const entData *data) {
 	int I;
 	if (dis == NULL) return;
@@ -479,25 +483,39 @@ void QUEUEinit( disturbs dis[], const entData *data) {
 }
 
 /*
- *
+ * Esta funcao foi adaptada e incorporada no codigo da generateDisturbs()
+ * para facilitar a paralelizacao.
  */
 void QUEUEput( disturbs dis[], disType elem, int r_row, int q_col, unsigned int bornscycle) {
-	int k;
-	#pragma omp critical
-	k = dis[elem].end;
-	dis[elem].end = (dis[elem].end + 1) % dis[elem].size;
-	#pragma omp parallel
-	/* verifica se dis[elem] esta cheio e se estiver, aloca novas posicoes */
-	if (dis[elem].end == dis[elem].begin) {
+	if (dis[elem].end + 1 == dis[elem].begin || (dis[elem].end + 1 == dis[elem].size && dis[elem].begin == 0)) {
 		printf( "\n%d - Socorro! Fila vai transbordar!\n", __LINE__);
 		exit( EXIT_FAILURE);
 	}
-	dis[elem].pos[k].pos.row = r_row;
-	dis[elem].pos[k].pos.col = q_col;
-	dis[elem].pos[k].energy = 0.0;
-	dis[elem].pos[k].bornscycle = bornscycle;
-	/*(dis[elem].end + 1 == dis[elem].size) ? dis[elem].end = 0 : dis[elem].end++;*/
+	dis[elem].pos[dis[elem].end].pos.row = r_row;
+	dis[elem].pos[dis[elem].end].pos.col = q_col;
+	dis[elem].pos[dis[elem].end].energy = 0.0;
+	dis[elem].pos[dis[elem].end].bornscycle = bornscycle;
+	(dis[elem].end + 1 == dis[elem].size) ? dis[elem].end = 0 : dis[elem].end++;
 }
+
+/*
+void QUEUEput( disturbs dis[], disType elem, int r_row, int q_col, unsigned int bornscycle) {
+	int k;
+	//#pragma omp critical
+	k = dis[elem].end;
+	dis[elem].end = (dis[elem].end + 1) % dis[elem].size;
+	//#pragma omp parallel
+	if (dis[elem].end == dis[elem].begin) {
+		printf( "\nSocorro! Fila vai transbordar!\n");
+		exit( EXIT_FAILURE);
+	}
+	dis[elem].pos[dis[elem].end].pos.row = r_row;
+	dis[elem].pos[dis[elem].end].pos.col = q_col;
+	dis[elem].pos[dis[elem].end].energy = 0.0;
+	dis[elem].pos[dis[elem].end].bornscycle = bornscycle;
+	//(dis[elem].end + 1 == dis[elem].size) ? dis[elem].end = 0 : dis[elem].end++;
+}
+*/
 
 void QUEUEupdate( hex *H[], disturbs dis[], unsigned int cycle) {
 	int I;
@@ -523,10 +541,10 @@ void QUEUEfree( disturbs dis[]) {
 */
 
 void generateDisturbs( hex *H[], disturbs dis[], entData *data, unsigned int cycle) {
-	int a, l, k;
-	#pragma omp parallel shared (H, dis, k)
+	int a, l;
+	#pragma omp parallel shared (H, dis)
 	{
-		#pragma omp for private (a, l, k)
+		#pragma omp for private (a, l)
 		for (a = 0; a < data->A; ++a) {
 			for (l = 0; l < data->L; ++l) {
 				/*H[a][l].sem = ((a + 1) * H[a][l].sem + l) % RAND_MAX;*/
@@ -534,10 +552,42 @@ void generateDisturbs( hex *H[], disturbs dis[], entData *data, unsigned int cyc
 					if (rand_r( &H[a][l].sem) / (RAND_MAX + 1.0) <= data->pc) {
 						H[a][l].elem = HOT;
 						#pragma omp critical
+						QUEUEput( dis, D_HOT, a, l, cycle);
+					}
+					else if (rand_r( &H[a][l].sem) / (RAND_MAX + 1.0) <= data->pf) {
+						H[a][l].elem = COLD;
+						#pragma omp critical
+						QUEUEput( dis, D_COLD, a, l, cycle);
+					}
+				}
+			}
+		}
+	}
+	return;
+}
+
+/*
+void generateDisturbs( hex *H[], disturbs dis[], entData *data, unsigned int cycle) {
+	int a, l, k;
+//	#pragma omp parallel shared (H, dis, k)
+//	{
+//		#pragma omp for private (a, l, k)
+		for (a = 0; a < data->A; ++a) {
+			for (l = 0; l < data->L; ++l) {
+				//H[a][l].sem = ((a + 1) * H[a][l].sem + l) % RAND_MAX;
+//printf( "\n\t%d - Thread_num=%d -> parallel=%d\n", __LINE__, omp_get_thread_num(), omp_in_parallel());
+//sleep( 2);
+
+				if (H[a][l].elem == VACANT) {
+					if (rand_r( &H[a][l].sem) / (RAND_MAX + 1.0) <= data->pc) {
+						H[a][l].elem = HOT;
+//						#pragma omp critical
 						k = dis[D_HOT].end;
 						dis[D_HOT].end = (dis[D_HOT].end + 1) % dis[D_HOT].size;
-						#pragma omp parallel
-						/* verifica se dis[D_HOT] esta cheio e se estiver, aloca novas posicoes */
+//printf( "\n\t%d - Thread_num=%d -> parallel=%d\n", __LINE__, omp_get_thread_num(), omp_in_parallel());
+//sleep( 2);
+
+//						#pragma omp parallel
 						if (dis[D_HOT].end == dis[D_HOT].begin) {
 							printf( "\n%d - Socorro! Fila vai transbordar!\n", __LINE__);
 							exit( EXIT_FAILURE);
@@ -549,11 +599,10 @@ void generateDisturbs( hex *H[], disturbs dis[], entData *data, unsigned int cyc
 					}
 					else if (rand_r( &H[a][l].sem) / (RAND_MAX + 1.0) <= data->pf) {
 						H[a][l].elem = COLD;
-						#pragma omp critical
+//						#pragma omp critical
 						k = dis[D_COLD].end;
 						dis[D_COLD].end = (dis[D_COLD].end + 1) % dis[D_COLD].size;
-						#pragma omp parallel
-						/* verifica se dis[D_COLD] esta cheio e se estiver, aloca novas posicoes */
+//						#pragma omp parallel
 						if (dis[D_COLD].end == dis[D_COLD].begin) {
 							printf( "\n%d - Socorro! Fila vai transbordar!\n", __LINE__);
 							exit( EXIT_FAILURE);
@@ -566,9 +615,10 @@ void generateDisturbs( hex *H[], disturbs dis[], entData *data, unsigned int cyc
 				}
 			}
 		}
-	}
+//	}
 	return;
 }
+*/
 
 /*
  * Calcula vizinhos vazios de cada joaninha.
@@ -754,11 +804,6 @@ printf( "--%d--AQUI---- p(%d,%d) -> q(%d,%d)\n", __LINE__, ladybug[b1].orig.pos.
 					disturbsEnergy( &ladybug[b1].vacneighbor[k], dis, data->C); /* atualizou: ladybug[b1].vacneighbor[k].energy */
 					E2 = 0.0;
 					for (b2 = 0; b2 < data->j; ++b2) {
-if (ladybug[b1].vacneighbor[k].pos.row == ladybug[b2].orig.pos.row && ladybug[b1].vacneighbor[k].pos.col == ladybug[b2].orig.pos.col) {
-printf( ">>%d>>AQUI---- p(%d,%d) -> q(%d,%d)\n", __LINE__, ladybug[b1].vacneighbor[k].pos.row, ladybug[b1].vacneighbor[k].pos.col, ladybug[b2].orig.pos.row, ladybug[b2].orig.pos.col);
-sleep(1);
-}
-
 						E2 += partialEnergy( ladybug[b1].vacneighbor[k].pos, ladybug[b2].orig.pos, LADYBUG, data->C);
 					}
 					ladybug[b1].vacneighbor[k].energy += E2;
@@ -816,7 +861,6 @@ int startSimulation( hex *H[], bug ladybug[], entData *data) {
 
 	for (cycle = 1; cycle < data->T; ++cycle) {
 //printf( "\n@--- cycle = %u ---@\n", cycle);
-
 		generateDisturbs( H, dis, data, cycle);
 		calcEnergy( H, dis, ladybug, data);
 		bugsMove( H, data, ladybug);
